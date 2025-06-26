@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ストリートビューパノラマ生成</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 ストリートビューパノラマ生成</h1>
+            <p>地図上で地点をクリックして360度パノラマ画像を生成</p>
+        </header>
+
+        <div class="main-content">
+            <div class="map-container">
+                <div id="map"></div>
+                <div class="map-info">
+                    <p>地図上をクリックして地点を選択してください</p>
+                    <div id="coordinates" class="coordinates"></div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button id="generateBtn" class="btn btn-primary" disabled>
+                    🎯 パノラマ生成
+                </button>
+                <div id="progress" class="progress hidden">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <div class="progress-text">画像を取得中...</div>
+                </div>
+            </div>
+
+            <div class="result-container">
+                <h3>生成されたパノラマ</h3>
+                <div id="panoramaResult" class="panorama-result hidden">
+                    <img id="panoramaImage" alt="パノラマ画像">
+                    <div class="panorama-actions">
+                        <a id="downloadBtn" class="btn btn-secondary" download>📥 ダウンロード</a>
+                        <button id="shareBtn" class="btn btn-secondary">📤 共有</button>
+                    </div>
+                </div>
+                <div id="errorMessage" class="error-message hidden"></div>
+            </div>
+
+            <div class="history-container">
+                <h3>生成履歴</h3>
+                <div id="panoramaHistory" class="panorama-history">
+                    <p class="no-history">まだパノラマが生成されていません</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
