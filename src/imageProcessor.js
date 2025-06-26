@@ -18,7 +18,7 @@ class ImageProcessor {
     }
 
     /**
-     * 8方向の画像からパノラマ画像を生成（中央320pxのみ使用）
+     * 8方向の画像からパノラマ画像を生成（中央350pxを使用してオーバーラップ）
      * @param {Array} images - 画像データの配列
      * @param {number} lat - 緯度
      * @param {number} lng - 経度
@@ -29,19 +29,19 @@ class ImageProcessor {
             throw new Error('画像データがありません');
         }
 
-        console.log('パノラマ画像を生成中...（中央320pxのみ使用）');
+        console.log('パノラマ画像を生成中...（350px幅 + オーバーラップブレンディング）');
 
         try {
             // 画像を正しい順序でソート（方位角順）
             const sortedImages = images.sort((a, b) => a.heading - b.heading);
             
-            // 各画像を640x640にリサイズし、中央320pxだけを切り出し
+            // 各画像を640x640にリサイズし、中央350pxだけを切り出し
             const processedImages = await Promise.all(
-                sortedImages.map(img => this.cropCenter(img.data, 320, 640))
+                sortedImages.map(img => this.cropCenter(img.data, 350, 640))
             );
 
-            // パノラマ画像を生成（2560x640）
-            const panoramaBuffer = await this.combineImages(processedImages, 320, 640);
+            // パノラマ画像を生成（2530x640）オーバーラップ込み
+            const panoramaBuffer = await this.blendImages(processedImages, 350, 640);
             
             // ファイル名を生成
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -68,7 +68,7 @@ class ImageProcessor {
      * @returns {Promise<Buffer>} 切り出された画像データ
      */
     async cropCenter(imageBuffer, cropWidth, cropHeight) {
-        // 640x640の中央320x640を切り出し
+        // 640x640の中央部分を切り出し（350x640または指定サイズ）
         const left = Math.floor((640 - cropWidth) / 2);
         return await sharp(imageBuffer)
             .resize(640, 640, { fit: 'fill' })
@@ -78,31 +78,22 @@ class ImageProcessor {
     }
 
     /**
-     * 複数の画像を横に結合してパノラマを作成
+     * 複数の画像をオーバーラップしてブレンドしながらパノラマを作成
      * @param {Array<Buffer>} imageBuffers - 画像バッファの配列
      * @param {number} imageWidth - 各画像の幅
      * @param {number} imageHeight - 各画像の高さ
      * @returns {Promise<Buffer>} 結合されたパノラマ画像
      */
-    async combineImages(imageBuffers, imageWidth, imageHeight) {
-        const panoramaWidth = imageWidth * imageBuffers.length; // 2560px (8枚 × 320px)
+    async blendImages(imageBuffers, imageWidth, imageHeight) {
+        const overlapWidth = 30; // 30pxのオーバーラップ
+        const effectiveWidth = imageWidth - overlapWidth; // 320px
+        const panoramaWidth = effectiveWidth * imageBuffers.length + overlapWidth; // 2530px
         const panoramaHeight = imageHeight; // 640px
 
-        console.log(`パノラマサイズ: ${panoramaWidth}x${panoramaHeight}`);
+        console.log(`パノラマサイズ: ${panoramaWidth}x${panoramaHeight} (オーバーラップ: ${overlapWidth}px)`);
 
-        // 各画像を横に並べて結合
-        const composite = [];
-        
-        for (let i = 0; i < imageBuffers.length; i++) {
-            composite.push({
-                input: imageBuffers[i],
-                left: i * imageWidth,
-                top: 0
-            });
-        }
-
-        // パノラマ画像を生成
-        const panoramaBuffer = await sharp({
+        // ベースキャンバスを作成
+        let panoramaBuffer = await sharp({
             create: {
                 width: panoramaWidth,
                 height: panoramaHeight,
@@ -110,11 +101,113 @@ class ImageProcessor {
                 background: { r: 0, g: 0, b: 0, alpha: 0 }
             }
         })
-        .composite(composite)
         .png()
         .toBuffer();
 
+        // 各画像を順番に合成
+        for (let i = 0; i < imageBuffers.length; i++) {
+            const left = i * effectiveWidth;
+            
+            if (i === 0) {
+                // 最初の画像はそのまま配置
+                panoramaBuffer = await sharp(panoramaBuffer)
+                    .composite([{
+                        input: imageBuffers[i],
+                        left: left,
+                        top: 0
+                    }])
+                    .png()
+                    .toBuffer();
+            } else {
+                // 2枚目以降はフェザリングマスク付きで合成
+                const maskedImage = await this.createMaskedImage(imageBuffers[i], imageWidth, imageHeight, overlapWidth);
+                panoramaBuffer = await sharp(panoramaBuffer)
+                    .composite([{
+                        input: maskedImage,
+                        left: left,
+                        top: 0,
+                        blend: 'over'
+                    }])
+                    .png()
+                    .toBuffer();
+            }
+        }
+
         return panoramaBuffer;
+    }
+
+    /**
+     * 画像にアルファグラデーションマスクを適用
+     * @param {Buffer} imageBuffer - 画像バッファ
+     * @param {number} imageWidth - 画像幅
+     * @param {number} imageHeight - 画像高さ
+     * @param {number} overlapWidth - オーバーラップ幅
+     * @returns {Promise<Buffer>} マスク適用済み画像
+     */
+    async createMaskedImage(imageBuffer, imageWidth, imageHeight, overlapWidth) {
+        // アルファグラデーションマスクを生成（左端のオーバーラップ部分）
+        const alphaMask = await this.createAlphaGradientMask(imageWidth, imageHeight, overlapWidth);
+        
+        // 元画像にアルファマスクを適用して透明度を制御
+        return await sharp(imageBuffer)
+            .ensureAlpha()
+            .composite([{
+                input: alphaMask,
+                blend: 'dest-in'  // アルファチャンネルのみを制御
+            }])
+            .png()
+            .toBuffer();
+    }
+
+    /**
+     * アルファグラデーションマスクを作成（透明度ベース）
+     * @param {number} width - マスク幅
+     * @param {number} height - マスク高さ
+     * @param {number} gradientWidth - グラデーション幅
+     * @returns {Promise<Buffer>} アルファグラデーションマスク
+     */
+    async createAlphaGradientMask(width, height, gradientWidth) {
+        // SVGでアルファグラデーションマスクを作成（透明度制御）
+        const svgAlphaGradient = `
+            <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="alphaFadeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" style="stop-color:white;stop-opacity:0" />
+                        <stop offset="${(gradientWidth / width) * 100}%" style="stop-color:white;stop-opacity:1" />
+                        <stop offset="100%" style="stop-color:white;stop-opacity:1" />
+                    </linearGradient>
+                </defs>
+                <rect width="${width}" height="${height}" fill="url(#alphaFadeGradient)" />
+            </svg>
+        `;
+        
+        return await sharp(Buffer.from(svgAlphaGradient))
+            .png()
+            .toBuffer();
+    }
+
+    /**
+     * グラデーションマスクを作成（後方互換性のため保持）
+     * @param {number} width - マスク幅
+     * @param {number} height - マスク高さ
+     * @param {number} gradientWidth - グラデーション幅
+     * @returns {Promise<Buffer>} グラデーションマスク
+     */
+    async createGradientMask(width, height, gradientWidth) {
+        // 新しいアルファグラデーションマスクを使用
+        return await this.createAlphaGradientMask(width, height, gradientWidth);
+    }
+
+    /**
+     * 複数の画像を横に結合してパノラマを作成（旧メソッド - 後方互換性のため保持）
+     * @param {Array<Buffer>} imageBuffers - 画像バッファの配列
+     * @param {number} imageWidth - 各画像の幅
+     * @param {number} imageHeight - 各画像の高さ
+     * @returns {Promise<Buffer>} 結合されたパノラマ画像
+     */
+    async combineImages(imageBuffers, imageWidth, imageHeight) {
+        // 新しいブレンドメソッドを使用
+        return await this.blendImages(imageBuffers, imageWidth, imageHeight);
     }
 
     /**
