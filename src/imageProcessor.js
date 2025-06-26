@@ -25,7 +25,17 @@ class ImageProcessor {
     async createPanorama(images, lat, lng) {
         try {
             console.log('パノラマ画像生成開始...');
-            
+            // images配列の中身を確認
+            console.log('images配列の長さ:', images.length);
+            images.forEach((img, i) => {
+                console.log(`images[${i}] type:`, typeof img, 'length:', img?.length);
+            });
+
+            // Bufferでないものが混じっていたらエラー
+            if (!Array.isArray(images) || images.some(img => !Buffer.isBuffer(img))) {
+                throw new Error('images配列にBufferでない要素があります');
+            }
+
             // 画像を横に結合
             const panorama = await sharp({
                 create: {
@@ -50,6 +60,11 @@ class ImageProcessor {
 
             // ファイルに保存
             await sharp(panorama).toFile(filepath);
+
+            // 保存直後に存在確認
+            if (!fs.existsSync(filepath)) {
+                throw new Error('パノラマ画像の保存に失敗しました');
+            }
 
             console.log(`パノラマ画像生成完了: ${filepath}`);
             return `/api/download/${filename}`;
