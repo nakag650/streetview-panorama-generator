@@ -24,7 +24,13 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'サーバーエラーが発生しました' });
 });
 
-app.listen(PORT, () => {
-    console.log(`サーバーが起動しました: http://localhost:${PORT}`);
-    console.log('Google Maps APIキーが設定されていることを確認してください');
-}); 
+// Vercel環境ではapp.listen()を実行しない
+if (process.env.NODE_ENV !== 'production' || process.env.VERCEL !== '1') {
+    app.listen(PORT, () => {
+        console.log(`サーバーが起動しました: http://localhost:${PORT}`);
+        console.log('Google Maps APIキーが設定されていることを確認してください');
+    });
+}
+
+// Vercel用にエクスポート
+module.exports = app; 
