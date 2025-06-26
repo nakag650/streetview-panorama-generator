@@ -27,10 +27,20 @@ router.post('/generate-panorama', async (req, res) => {
 
         // ストリートビュー画像を取得
         const streetViewService = new StreetViewService();
-        const images = await streetViewService.getStreetViewImages(lat, lng);
+        const imageObjects = await streetViewService.getStreetViewImages(lat, lng);
 
-        if (!images || images.length === 0) {
+        if (!imageObjects || imageObjects.length === 0) {
             return res.status(404).json({ error: 'この地点ではストリートビューが利用できません' });
+        }
+
+        // 画像オブジェクトからBufferの配列を抽出（heading順にソート）
+        const images = imageObjects
+            .sort((a, b) => a.heading - b.heading)
+            .map(imgObj => imgObj.data)
+            .filter(Buffer.isBuffer);
+
+        if (images.length === 0) {
+            return res.status(404).json({ error: '有効な画像データが取得できませんでした' });
         }
 
         // パノラマ画像を生成

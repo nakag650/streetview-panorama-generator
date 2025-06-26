@@ -1,6 +1,7 @@
 const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 
 class ImageProcessor {
     constructor() {
@@ -16,63 +17,33 @@ class ImageProcessor {
     }
 
     /**
-     * 8方向の画像からパノラマ画像を生成（中央350pxを使用してオーバーラップ）
-     * @param {Array} images - 画像データの配列
+     * 8方向の画像からパノラマ画像を生成（中央320pxのみ使用）
+     * @param {Array} images - 画像データの配列（Buffer配列、heading順）
      * @param {number} lat - 緯度
      * @param {number} lng - 経度
      * @returns {Promise<string>} 生成された画像のパス
      */
     async createPanorama(images, lat, lng) {
-        try {
-            console.log('パノラマ画像生成開始...');
-            // images配列の中身を確認
-            console.log('images配列の長さ:', images.length);
-            images.forEach((img, i) => {
-                console.log(`images[${i}] type:`, typeof img, 'length:', img?.length);
-            });
-
-            // Bufferでないものが混じっていたらエラー
-            if (!Array.isArray(images) || images.some(img => !Buffer.isBuffer(img))) {
-                throw new Error('images配列にBufferでない要素があります');
-            }
-
-            // 画像を横に結合
-            const panorama = await sharp({
-                create: {
-                    width: 5120,
-                    height: 640,
-                    channels: 3,
-                    background: { r: 255, g: 255, b: 255 }
-                }
-            })
-            .composite(images.map((imageBuffer, index) => ({
-                input: imageBuffer,
-                left: index * 640,
-                top: 0
-            })))
-            .png()
-            .toBuffer();
-
-            // ファイル名を生成
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const filename = `panorama_${lat}_${lng}_${timestamp}.png`;
-            const filepath = path.join(this.outputDir, filename);
-
-            // ファイルに保存
-            await sharp(panorama).toFile(filepath);
-
-            // 保存直後に存在確認
-            if (!fs.existsSync(filepath)) {
-                throw new Error('パノラマ画像の保存に失敗しました');
-            }
-
-            console.log(`パノラマ画像生成完了: ${filepath}`);
-            return `/api/download/${filename}`;
-
-        } catch (error) {
-            console.error('パノラマ生成エラー:', error);
-            throw error;
+        if (!Array.isArray(images) || images.length === 0) {
+            throw new Error('画像データがありません');
         }
+        // images: Buffer配列（heading順）
+        // 各画像の中央320pxを切り出し
+        const processedImages = await Promise.all(
+            images.map(img => this.cropCenter(img, 320, 640))
+        );
+        // 横に結合（2560x640）
+        const panoramaBuffer = await this.combineImages(processedImages, 320, 640);
+        // ファイル名を生成
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `panorama_${lat}_${lng}_${timestamp}.png`;
+        const filepath = path.join(this.outputDir, filename);
+        // ファイルに保存
+        await sharp(panoramaBuffer).toFile(filepath);
+        if (!fs.existsSync(filepath)) {
+            throw new Error('パノラマ画像の保存に失敗しました');
+        }
+        return `/api/download/${filename}`;
     }
 
     /**
@@ -93,136 +64,30 @@ class ImageProcessor {
     }
 
     /**
-     * 複数の画像をオーバーラップしてブレンドしながらパノラマを作成
-     * @param {Array<Buffer>} imageBuffers - 画像バッファの配列
-     * @param {number} imageWidth - 各画像の幅
-     * @param {number} imageHeight - 各画像の高さ
-     * @returns {Promise<Buffer>} 結合されたパノラマ画像
-     */
-    async blendImages(imageBuffers, imageWidth, imageHeight) {
-        const overlapWidth = 30; // 30pxのオーバーラップ
-        const effectiveWidth = imageWidth - overlapWidth; // 320px
-        const panoramaWidth = effectiveWidth * imageBuffers.length + overlapWidth; // 2530px
-        const panoramaHeight = imageHeight; // 640px
-
-        console.log(`パノラマサイズ: ${panoramaWidth}x${panoramaHeight} (オーバーラップ: ${overlapWidth}px)`);
-
-        // ベースキャンバスを作成
-        let panoramaBuffer = await sharp({
-            create: {
-                width: panoramaWidth,
-                height: panoramaHeight,
-                channels: 4,
-                background: { r: 0, g: 0, b: 0, alpha: 0 }
-            }
-        })
-        .png()
-        .toBuffer();
-
-        // 各画像を順番に合成
-        for (let i = 0; i < imageBuffers.length; i++) {
-            const left = i * effectiveWidth;
-            
-            if (i === 0) {
-                // 最初の画像はそのまま配置
-                panoramaBuffer = await sharp(panoramaBuffer)
-                    .composite([{
-                        input: imageBuffers[i],
-                        left: left,
-                        top: 0
-                    }])
-                    .png()
-                    .toBuffer();
-            } else {
-                // 2枚目以降はフェザリングマスク付きで合成
-                const maskedImage = await this.createMaskedImage(imageBuffers[i], imageWidth, imageHeight, overlapWidth);
-                panoramaBuffer = await sharp(panoramaBuffer)
-                    .composite([{
-                        input: maskedImage,
-                        left: left,
-                        top: 0,
-                        blend: 'over'
-                    }])
-                    .png()
-                    .toBuffer();
-            }
-        }
-
-        return panoramaBuffer;
-    }
-
-    /**
-     * 画像にアルファグラデーションマスクを適用
-     * @param {Buffer} imageBuffer - 画像バッファ
-     * @param {number} imageWidth - 画像幅
-     * @param {number} imageHeight - 画像高さ
-     * @param {number} overlapWidth - オーバーラップ幅
-     * @returns {Promise<Buffer>} マスク適用済み画像
-     */
-    async createMaskedImage(imageBuffer, imageWidth, imageHeight, overlapWidth) {
-        // アルファグラデーションマスクを生成（左端のオーバーラップ部分）
-        const alphaMask = await this.createAlphaGradientMask(imageWidth, imageHeight, overlapWidth);
-        
-        // 元画像にアルファマスクを適用して透明度を制御
-        return await sharp(imageBuffer)
-            .ensureAlpha()
-            .composite([{
-                input: alphaMask,
-                blend: 'dest-in'  // アルファチャンネルのみを制御
-            }])
-            .png()
-            .toBuffer();
-    }
-
-    /**
-     * アルファグラデーションマスクを作成（透明度ベース）
-     * @param {number} width - マスク幅
-     * @param {number} height - マスク高さ
-     * @param {number} gradientWidth - グラデーション幅
-     * @returns {Promise<Buffer>} アルファグラデーションマスク
-     */
-    async createAlphaGradientMask(width, height, gradientWidth) {
-        // SVGでアルファグラデーションマスクを作成（透明度制御）
-        const svgAlphaGradient = `
-            <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                    <linearGradient id="alphaFadeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" style="stop-color:white;stop-opacity:0" />
-                        <stop offset="${(gradientWidth / width) * 100}%" style="stop-color:white;stop-opacity:1" />
-                        <stop offset="100%" style="stop-color:white;stop-opacity:1" />
-                    </linearGradient>
-                </defs>
-                <rect width="${width}" height="${height}" fill="url(#alphaFadeGradient)" />
-            </svg>
-        `;
-        
-        return await sharp(Buffer.from(svgAlphaGradient))
-            .png()
-            .toBuffer();
-    }
-
-    /**
-     * グラデーションマスクを作成（後方互換性のため保持）
-     * @param {number} width - マスク幅
-     * @param {number} height - マスク高さ
-     * @param {number} gradientWidth - グラデーション幅
-     * @returns {Promise<Buffer>} グラデーションマスク
-     */
-    async createGradientMask(width, height, gradientWidth) {
-        // 新しいアルファグラデーションマスクを使用
-        return await this.createAlphaGradientMask(width, height, gradientWidth);
-    }
-
-    /**
-     * 複数の画像を横に結合してパノラマを作成（旧メソッド - 後方互換性のため保持）
+     * 複数の画像を横に結合してパノラマを作成（シンプルな横並び）
      * @param {Array<Buffer>} imageBuffers - 画像バッファの配列
      * @param {number} imageWidth - 各画像の幅
      * @param {number} imageHeight - 各画像の高さ
      * @returns {Promise<Buffer>} 結合されたパノラマ画像
      */
     async combineImages(imageBuffers, imageWidth, imageHeight) {
-        // 新しいブレンドメソッドを使用
-        return await this.blendImages(imageBuffers, imageWidth, imageHeight);
+        const panoramaWidth = imageWidth * imageBuffers.length;
+        const composite = imageBuffers.map((buf, i) => ({
+            input: buf,
+            left: i * imageWidth,
+            top: 0
+        }));
+        return await sharp({
+            create: {
+                width: panoramaWidth,
+                height: imageHeight,
+                channels: 4,
+                background: { r: 0, g: 0, b: 0, alpha: 0 }
+            }
+        })
+        .composite(composite)
+        .png()
+        .toBuffer();
     }
 
     /**
@@ -271,6 +136,25 @@ class ImageProcessor {
             console.error('画像削除エラー:', error);
             return false;
         }
+    }
+
+    async getStreetViewImages(lat, lng) {
+        const images = [];
+        for (let heading = 0; heading < 360; heading += 45) {
+            const url = `https://maps.googleapis.com/maps/api/streetview?...&heading=${heading}&key=${process.env.GOOGLE_STREET_VIEW_API_KEY}`;
+            try {
+                const response = await axios.get(url, { responseType: 'arraybuffer' });
+                if (response.status === 200 && response.data && response.data.length > 0) {
+                    images.push(Buffer.from(response.data));
+                } else {
+                    console.error('Street View APIから画像が取得できませんでした:', url);
+                }
+            } catch (error) {
+                console.error('Street View APIリクエストエラー:', error.message, url);
+            }
+        }
+        // Bufferでないものは除外
+        return images.filter(img => Buffer.isBuffer(img));
     }
 }
 
