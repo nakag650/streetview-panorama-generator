@@ -288,4 +288,56 @@ window.addEventListener('online', function() {
 
 window.addEventListener('offline', function() {
     showError('インターネット接続が切断されました');
-}); 
+});
+
+// パノラマ一覧を表示
+async function loadPanoramas() {
+    try {
+        const response = await fetch('/api/panoramas');
+        const data = await response.json();
+        
+        const panoramaList = document.getElementById('panoramaList');
+        panoramaList.innerHTML = '';
+        
+        if (data.panoramas.length === 0) {
+            panoramaList.innerHTML = '<p>まだパノラマが生成されていません</p>';
+            return;
+        }
+        
+        data.panoramas.forEach(panorama => {
+            const item = document.createElement('div');
+            item.className = 'panorama-item';
+            item.innerHTML = `
+                <img src="${panorama.path}" alt="パノラマ画像" style="width: 100%; max-width: 300px;">
+                <p>${panorama.filename}</p>
+                <button onclick="downloadPanorama('${panorama.filename}')" class="download-btn">ダウンロード</button>
+            `;
+            panoramaList.appendChild(item);
+        });
+    } catch (error) {
+        console.error('パノラマ一覧取得エラー:', error);
+    }
+}
+
+// パノラマをダウンロード
+async function downloadPanorama(filename) {
+    try {
+        const response = await fetch(`/api/download/${filename}`);
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } else {
+            alert('ダウンロードに失敗しました');
+        }
+    } catch (error) {
+        console.error('ダウンロードエラー:', error);
+        alert('ダウンロードに失敗しました');
+    }
+} 

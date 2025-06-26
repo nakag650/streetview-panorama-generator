@@ -4,14 +4,12 @@ const path = require('path');
 
 class ImageProcessor {
     constructor() {
-        this.outputDir = path.join(__dirname, '../output');
-        this.ensureOutputDir();
-    }
-
-    /**
-     * 出力ディレクトリが存在することを確認
-     */
-    ensureOutputDir() {
+        // Vercel環境では/tmpディレクトリを使用
+        this.outputDir = process.env.NODE_ENV === 'production' 
+            ? '/tmp' 
+            : path.join(__dirname, '../output');
+        
+        // 出力ディレクトリが存在しない場合は作成
         if (!fs.existsSync(this.outputDir)) {
             fs.mkdirSync(this.outputDir, { recursive: true });
         }
@@ -25,34 +23,36 @@ class ImageProcessor {
      * @returns {Promise<string>} 生成された画像のパス
      */
     async createPanorama(images, lat, lng) {
-        if (!images || images.length === 0) {
-            throw new Error('画像データがありません');
-        }
-
-        console.log('パノラマ画像を生成中...（350px幅 + オーバーラップブレンディング）');
-
         try {
-            // 画像を正しい順序でソート（方位角順）
-            const sortedImages = images.sort((a, b) => a.heading - b.heading);
+            console.log('パノラマ画像生成開始...');
             
-            // 各画像を640x640にリサイズし、中央350pxだけを切り出し
-            const processedImages = await Promise.all(
-                sortedImages.map(img => this.cropCenter(img.data, 350, 640))
-            );
+            // 画像を横に結合
+            const panorama = await sharp({
+                create: {
+                    width: 5120,
+                    height: 640,
+                    channels: 3,
+                    background: { r: 255, g: 255, b: 255 }
+                }
+            })
+            .composite(images.map((imageBuffer, index) => ({
+                input: imageBuffer,
+                left: index * 640,
+                top: 0
+            })))
+            .png()
+            .toBuffer();
 
-            // パノラマ画像を生成（2530x640）オーバーラップ込み
-            const panoramaBuffer = await this.blendImages(processedImages, 350, 640);
-            
             // ファイル名を生成
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const filename = `panorama_${lat}_${lng}_${timestamp}.png`;
             const filepath = path.join(this.outputDir, filename);
 
             // ファイルに保存
-            await sharp(panoramaBuffer).png().toFile(filepath);
+            await sharp(panorama).toFile(filepath);
 
-            console.log(`パノラマ画像を保存しました: ${filename}`);
-            return `/output/${filename}`;
+            console.log(`パノラマ画像生成完了: ${filepath}`);
+            return `/api/download/${filename}`;
 
         } catch (error) {
             console.error('パノラマ生成エラー:', error);

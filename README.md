@@ -73,6 +73,60 @@ npm run dev
 
 ブラウザで `http://localhost:3000` にアクセスしてください。
 
+## 🌐 デプロイ
+
+### Vercelでのデプロイ（推奨）
+
+1. **Vercelアカウント作成**
+   - [Vercel](https://vercel.com/)にアクセスしてアカウントを作成
+
+2. **GitHubリポジトリにプッシュ**
+   ```bash
+   git add .
+   git commit -m "Initial commit"
+   git push origin main
+   ```
+
+3. **Vercelでプロジェクトをインポート**
+   - Vercelダッシュボードで「New Project」をクリック
+   - GitHubリポジトリを選択
+   - プロジェクト設定を確認
+
+4. **環境変数の設定**
+   - Vercelダッシュボードの「Settings」→「Environment Variables」
+   - 以下の環境変数を追加：
+     - `GOOGLE_MAPS_API_KEY`
+     - `GOOGLE_STREET_VIEW_API_KEY`
+     - `NODE_ENV=production`
+
+5. **デプロイ**
+   - 「Deploy」ボタンをクリック
+   - デプロイ完了後、提供されたURLでアクセス可能
+
+### その他のデプロイ先
+
+#### Railway
+```bash
+# Railway CLIをインストール
+npm install -g @railway/cli
+
+# ログイン
+railway login
+
+# プロジェクトを初期化
+railway init
+
+# デプロイ
+railway up
+```
+
+#### Render
+1. [Render](https://render.com/)でアカウント作成
+2. 「New Web Service」を選択
+3. GitHubリポジトリを接続
+4. 環境変数を設定
+5. デプロイ
+
 ## 🔒 セキュリティ
 
 ### APIキーの安全な管理
@@ -100,6 +154,7 @@ npm run dev
 streetView/
 ├── package.json              # プロジェクト設定
 ├── server.js                 # Express サーバー
+├── vercel.json              # Vercel設定
 ├── env.example              # 環境変数例
 ├── .env                     # 環境変数（要作成）
 ├── .gitignore               # Git除外設定
@@ -172,6 +227,11 @@ streetView/
 4. **地図が表示されない**
    - Google Maps APIキーが正しく設定されているか確認
    - ブラウザのコンソールでエラーを確認
+
+5. **デプロイエラー**
+   - 環境変数が正しく設定されているか確認
+   - `vercel.json`ファイルが存在するか確認
+   - Node.jsバージョンが16以上であることを確認
 
 ## 📄 ライセンス
 

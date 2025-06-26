@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const StreetViewService = require('./streetViewService');
 const ImageProcessor = require('./imageProcessor');
+const path = require('path');
+const fs = require('fs');
 
 // Google Maps APIキーを安全に提供するエンドポイント
 router.get('/maps-api-key', (req, res) => {
@@ -47,18 +49,38 @@ router.post('/generate-panorama', async (req, res) => {
     }
 });
 
+// 画像ダウンロードエンドポイント
+router.get('/download/:filename', (req, res) => {
+    try {
+        const { filename } = req.params;
+        const outputDir = process.env.NODE_ENV === 'production' ? '/tmp' : path.join(__dirname, '../output');
+        const filepath = path.join(outputDir, filename);
+
+        if (!fs.existsSync(filepath)) {
+            return res.status(404).json({ error: 'ファイルが見つかりません' });
+        }
+
+        res.download(filepath, filename);
+    } catch (error) {
+        console.error('ダウンロードエラー:', error);
+        res.status(500).json({ error: 'ダウンロードに失敗しました' });
+    }
+});
+
 // 生成された画像の一覧を取得
 router.get('/panoramas', (req, res) => {
     try {
-        const fs = require('fs');
-        const path = require('path');
+        const outputDir = process.env.NODE_ENV === 'production' ? '/tmp' : path.join(__dirname, '../output');
         
-        const outputDir = path.join(__dirname, '../output');
+        if (!fs.existsSync(outputDir)) {
+            return res.json({ panoramas: [] });
+        }
+
         const files = fs.readdirSync(outputDir)
             .filter(file => file.endsWith('.png'))
             .map(file => ({
                 filename: file,
-                path: `/output/${file}`,
+                path: `/api/download/${file}`,
                 timestamp: fs.statSync(path.join(outputDir, file)).mtime
             }))
             .sort((a, b) => b.timestamp - a.timestamp);
